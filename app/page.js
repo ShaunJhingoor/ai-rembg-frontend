@@ -70,7 +70,7 @@ export default function Home() {
       const fd = new FormData();
       fd.append("video", file);
 
-      const res = await fetch(`http://localhost:8080/process`, {
+      const res = await fetch(workerUrlRef.current, {
         method: "POST",
         body: fd,
       });
@@ -139,7 +139,7 @@ export default function Home() {
           {/* Header */}
 
           <div className="mb-8 text-center">
-            <h1 className="mb-3 bg-gradient-to-r from-cyan-300 via-sky-200 to-teal-200 bg-clip-text text-3xl font-bold text-transparent md:text-4xl">
+            <h1 className="mb-3 bg-linear-to-r from-cyan-300 via-sky-200 to-teal-200 bg-clip-text text-3xl font-bold text-transparent md:text-4xl">
               AI Video Background Remover
             </h1>
             <p className="text-sm text-white/70 md:text-base">
@@ -228,11 +228,6 @@ export default function Home() {
 
               {/* Action row */}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs text-white/60">
-                  Endpoint:{" "}
-                  <code className="text-white/80">{workerUrlRef.current}</code>
-                </div>
-
                 <motion.button
                   whileHover={{ y: -2 }}
                   whileTap={{ y: 0 }}
@@ -265,7 +260,7 @@ export default function Home() {
                     className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/10"
                   >
                     <motion.span
-                      className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-gradient-to-r from-cyan-300 to-teal-300"
+                      className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-linear-to-r from-cyan-300 to-teal-300"
                       animate={{ x: ["0%", "200%"] }}
                       transition={{
                         repeat: Infinity,
