@@ -109,6 +109,9 @@ export default function BackgroundRemover() {
     canvas.width = outW;
     canvas.height = outH;
 
+    console.log("Video dims", outW, outH);
+    console.log("Canvas dims", canvas.width, canvas.height);
+
     setProcessing(true);
     setLoading(true);
     setLog("Processing video frames…");
@@ -134,12 +137,31 @@ export default function BackgroundRemover() {
         // 1. Draw the *original* video frame to the canvas
         ctx.drawImage(video, 0, 0, outW, outH);
 
-        // 2. Run segmentation on the current frame
-        const segmentation = await segmenter.segmentPeople(video);
+        // 2. Run segmentation on the canvas (same size as we’re using)
+        const peopleSegmentation = await segmenter.segmentPeople(canvas);
 
-        // 3. Convert segmentation → binary mask (ImageData).
-        //    By default, alpha = 255 for BACKGROUND pixels.
-        const maskImage = await bodySegmentation.toBinaryMask(segmentation);
+        // ❗ If no person detected, skip this frame gracefully
+        if (!peopleSegmentation || peopleSegmentation.length === 0) {
+          // optional: just keep the original frame
+          rafId = requestAnimationFrame(processFrame);
+          return;
+        }
+
+        // 3. Convert segmentation → binary mask (ImageData)
+        const maskImage = await bodySegmentation.toBinaryMask(
+          peopleSegmentation
+        );
+
+        // Sanity check: mask size must match canvas size
+        if (!maskImage.width || !maskImage.height) {
+          console.warn(
+            "Mask has invalid dimensions",
+            maskImage.width,
+            maskImage.height
+          );
+          rafId = requestAnimationFrame(processFrame);
+          return;
+        }
 
         // 4. Read back the frame pixels we just drew
         const frameImageData = ctx.getImageData(0, 0, outW, outH);
@@ -147,10 +169,18 @@ export default function BackgroundRemover() {
         // 5. Use the mask’s alpha channel to punch out the background
         //    maskImage.data is [R, G, B, A, ...]
         for (let i = 3; i < frameImageData.data.length; i += 4) {
-          // Background pixels in mask have alpha 255
-          if (maskImage.data[i] === 255) {
-            // Make background transparent
-            frameImageData.data[i] = 0;
+          // In body-segmentation’s toBinaryMask:
+          // - foreground (person) = white
+          // - background = black
+          // We'll treat black (A=255 but RGB=0) as background:
+          const r = maskImage.data[i - 3];
+          const g = maskImage.data[i - 2];
+          const b = maskImage.data[i - 1];
+          const a = maskImage.data[i];
+
+          const isBackground = r === 0 && g === 0 && b === 0 && a === 255;
+          if (isBackground) {
+            frameImageData.data[i] = 0; // make background transparent
           }
         }
 
