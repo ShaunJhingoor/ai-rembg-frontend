@@ -72,7 +72,7 @@ export default function BackgroundRemover() {
     e.stopPropagation();
   }
 
-  // 🔥 MAIN PIPELINE: manual mask from seg0.mask, no toBinaryMask
+  // 🔥 MAIN PIPELINE
   async function startProcessing() {
     if (!segmenter || !videoRef.current || !canvasRef.current || !file) return;
 
@@ -98,18 +98,18 @@ export default function BackgroundRemover() {
       });
     }
 
-    const outW = video.videoWidth;
-    const outH = video.videoHeight;
+    const W = video.videoWidth;
+    const H = video.videoHeight;
 
-    if (!outW || !outH) {
-      console.error("Video has invalid dimensions", { outW, outH });
+    if (!W || !H) {
+      console.error("Video has invalid dimensions", { W, H });
       return;
     }
 
-    canvas.width = outW;
-    canvas.height = outH;
+    canvas.width = W;
+    canvas.height = H;
 
-    console.log("Video dims", outW, outH);
+    console.log("Video dims", W, H);
     console.log("Canvas dims", canvas.width, canvas.height);
 
     setProcessing(true);
@@ -119,88 +119,93 @@ export default function BackgroundRemover() {
       "Everything runs in your browser. Longer clips will take more time."
     );
 
+    // 🎥 start recording the canvas
     const { stop } = startCanvasRecorder(canvas);
 
     let rafId = null;
-    let errorCount = 0;
+    let lastMask = null;
 
-    const processFrame = async () => {
+    // Hard binary mask: white=person, transparent=background
+    const foregroundColor = { r: 255, g: 255, b: 255, a: 255 }; // person
+    const backgroundColor = { r: 0, g: 0, b: 0, a: 0 }; // transparent bg
+    const foregroundThreshold = 0.6; // tweak 0.55–0.7 if hands still go missing
+
+    // Per-frame processor
+    async function processFrame() {
       if (video.paused || video.ended) return;
 
-      // Make sure the current frame is ready
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
         rafId = requestAnimationFrame(processFrame);
         return;
       }
 
       try {
-        // 1. Draw the *original* video frame to the canvas
-        ctx.drawImage(video, 0, 0, outW, outH);
+        // 1. Draw original frame
+        ctx.drawImage(video, 0, 0, W, H);
 
-        // 2. Run segmentation on the canvas (same size as we’re using)
-        const peopleSegmentation = await segmenter.segmentPeople(canvas);
+        // 2. Run segmentation on the canvas
+        const seg = await segmenter.segmentPeople(canvas);
 
-        // ❗ If no person detected, skip this frame gracefully
-        if (!peopleSegmentation || peopleSegmentation.length === 0) {
-          // optional: just keep the original frame
-          rafId = requestAnimationFrame(processFrame);
-          return;
-        }
+        let maskImage = null;
 
-        // 3. Convert segmentation → binary mask (ImageData)
-        const maskImage = await bodySegmentation.toBinaryMask(
-          peopleSegmentation
-        );
-
-        // Sanity check: mask size must match canvas size
-        if (!maskImage.width || !maskImage.height) {
-          console.warn(
-            "Mask has invalid dimensions",
-            maskImage.width,
-            maskImage.height
+        if (seg && seg.length > 0) {
+          // Build binary mask with explicit threshold
+          maskImage = await bodySegmentation.toBinaryMask(
+            seg,
+            foregroundColor,
+            backgroundColor,
+            false, // drawContour
+            foregroundThreshold // 0.6: keeps more detail (hands)
           );
+          lastMask = maskImage;
+        } else if (lastMask) {
+          // No seg this frame → reuse last good mask to avoid bg popping in
+          maskImage = lastMask;
+        } else {
+          // No mask at all yet, just show original frame
           rafId = requestAnimationFrame(processFrame);
           return;
         }
 
-        // 4. Read back the frame pixels we just drew
-        const frameImageData = ctx.getImageData(0, 0, outW, outH);
+        if (!maskImage) {
+          rafId = requestAnimationFrame(processFrame);
+          return;
+        }
 
-        // 5. Use the mask’s alpha channel to punch out the background
-        //    maskImage.data is [R, G, B, A, ...]
-        for (let i = 3; i < frameImageData.data.length; i += 4) {
-          // In body-segmentation’s toBinaryMask:
-          // - foreground (person) = white
-          // - background = black
-          // We'll treat black (A=255 but RGB=0) as background:
-          const r = maskImage.data[i - 3];
-          const g = maskImage.data[i - 2];
-          const b = maskImage.data[i - 1];
-          const a = maskImage.data[i];
+        // 3. Get current frame pixels
+        const frame = ctx.getImageData(0, 0, W, H);
+        const fp = frame.data;
+        const mp = maskImage.data;
 
-          const isBackground = r === 0 && g === 0 && b === 0 && a === 255;
-          if (isBackground) {
-            frameImageData.data[i] = 0; // make background transparent
+        // 4. Apply mask: keep subject, drop background
+        // mp[i+3] is alpha: 255 = subject, 0 = background
+        for (let i = 0; i < fp.length; i += 4) {
+          const a = mp[i + 3];
+
+          if (a === 0) {
+            // background → transparent
+            fp[i + 3] = 0;
+          } else {
+            // subject → fully opaque
+            fp[i + 3] = 255;
           }
         }
 
-        // 6. Put back the modified frame on the canvas
-        ctx.putImageData(frameImageData, 0, 0);
+        // 5. Draw result
+        ctx.putImageData(frame, 0, 0);
       } catch (err) {
-        errorCount++;
-        if (errorCount <= 10) {
-          console.error("Segmentation error (frame skipped):", err);
-        }
+        console.error("Segmentation error, skipping frame:", err);
       }
 
       rafId = requestAnimationFrame(processFrame);
-    };
+    }
 
-    // Reset video to start and begin
+    // Kick off processing
     video.currentTime = 0;
     await video.play();
     rafId = requestAnimationFrame(processFrame);
 
+    // When the video ends, stop recording and download result
     video.onended = async () => {
       if (rafId) cancelAnimationFrame(rafId);
 
@@ -359,7 +364,7 @@ export default function BackgroundRemover() {
                 )}
               </AnimatePresence>
 
-              {/* ⚠️ Make canvas VISIBLE for debugging */}
+              {/* Canvas */}
               <canvas
                 ref={canvasRef}
                 className="mt-4 w-full rounded-2xl bg-black/80"
