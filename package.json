@@ -15,7 +15,7 @@
     "@tensorflow/tfjs-backend-webgl": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "framer-motion": "^12.23.24",
-    "next": "16.0.1",
+    "next": "16.0.10",
     "next-transpile-modules": "^10.0.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
